@@ -1,0 +1,417 @@
+setwd("C:/Users/kitae/Dropbox/카이스트/[4] 2017 봄학기/비즈니스모델링분석/Final")
+
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(reshape)
+library(caret)
+library(ROCR)
+library(matrixStats)
+
+cs <- read.delim("train_clickstreams.tab", stringsAsFactors = F)
+sk <- read.delim("train_searchkeywords.tab", stringsAsFactors = F)
+profile <- read.csv("train_profiles.csv", stringsAsFactors = F, header = T)
+
+cs_t <- read.delim("test_clickstreams.tab", stringsAsFactors = F)
+sk_t <- read.delim("test_searchkeywords.tab", stringsAsFactors = F)
+
+#########Module 1 : Create Training Set#########
+
+####총 페이지뷰 횟수
+cs.V1 <- cs %>% 
+  group_by(CUS_ID) %>%
+  summarize(ttl_pv = sum(SITE_CNT))
+
+####웹사이트 카테고리별 페이지뷰 비율
+cs.V2.1 <- cs %>%
+  group_by(CUS_ID, BACT_NM) %>%
+  summarize(cs = n()) %>%
+  cast(CUS_ID ~ BACT_NM, sum) %>%
+  mutate(ttl_pv = cs.V1$ttl_pv)
+
+cs.V2.1[,2:23] <- cs.V2.1[,2:23]/cs.V2.1[,24]
+cs.V2.1 <- cs.V2.1[,-24]
+names(cs.V2.1)[-1] <- paste("pv", names(cs.V2.1)[-1], sep="_")
+
+cs.V2.2 <- cs %>%
+  group_by(CUS_ID, MACT_NM) %>%
+  summarize(cs = n()) %>%
+  cast(CUS_ID ~ MACT_NM, sum) %>%
+  mutate(ttl_pv = cs.V1$ttl_pv)
+
+cs.V2.2[,2:208] <- cs.V2.2[,2:208]/cs.V2.2[,209]
+cs.V2.2 <- cs.V2.2[,-209]
+names(cs.V2.2)[-1] <- paste("mact", names(cs.V2.2)[-1], sep="_")
+
+cs.V2 <- inner_join(cs.V2.1, cs.V2.2, by=("CUS_ID"))
+
+####카테고리에 대한 변동계수
+cs.V3 <- cs %>%
+  group_by(CUS_ID, BACT_NM) %>%
+  summarize(cs = n()) %>%
+  cast(CUS_ID ~ BACT_NM, sum) %>%
+  mutate(avg_pv = rowMeans(.[2:23]), sd_pv = rowSds(as.matrix(.[2:23]))) %>%
+  mutate(coef_var_cat = sd_pv/avg_pv) %>%
+  select(CUS_ID, coef_var_cat)
+
+####날짜계산용 전처리
+cs$TIME_ID <- ymd_h(cs$TIME_ID)
+cs$date <- date(cs$TIME_ID)
+cs$year <- year(cs$TIME_ID)
+cs$month <- month(cs$TIME_ID)
+cs$day <- day(cs$TIME_ID)
+cs$time <- hour(cs$TIME_ID)
+cs$wkday <- wday(cs$TIME_ID)
+
+####총 방문 일수
+cs.V4 <- cs %>%
+  group_by(CUS_ID, date) %>%
+  summarize(cs = n()) %>%
+  group_by(CUS_ID) %>%
+  summarize(ttl_vis_day = n())
+
+####월별, 요일별, 시간대별 페이지뷰 비율 
+#월별
+cs.V5.mth <- cs %>%
+  group_by(CUS_ID, month) %>%
+  summarize(pv_mth = sum(SITE_CNT)) %>%
+  cast(CUS_ID ~ month, sum) %>%
+  mutate(ttl_pv = cs.V1$ttl_pv)
+
+cs.V5.mth[,2:13] <- cs.V5.mth[,2:13]/cs.V5.mth[,14]
+cs.V5.mth <- cs.V5.mth[,-14]
+names(cs.V5.mth)[-1] <- paste("mth", names(cs.V5.mth)[-1], sep="_")
+
+#요일별
+cs.V5.day <- cs %>%
+  group_by(CUS_ID, wkday) %>%
+  summarize(pv_day = sum(SITE_CNT)) %>%
+  cast(CUS_ID ~ wkday, sum) %>%
+  mutate(ttl_pv = cs.V1$ttl_pv)
+
+cs.V5.day[,2:8] <- cs.V5.day[,2:8]/cs.V5.day[,9]
+cs.V5.day <- cs.V5.day[,-9]
+names(cs.V5.day) <- c("CUS_ID", "sun", "mon", "tue", "wed", "thu", "fri", "sat")
+
+#시간대별
+cs.V5.time <- cs %>%
+  group_by(CUS_ID, time) %>%
+  summarize(pv_time = sum(SITE_CNT)) %>%
+  cast(CUS_ID ~ time, sum) %>%
+  mutate(ttl_pv = cs.V1$ttl_pv)
+
+cs.V5.time[,2:25] <- cs.V5.time[,2:25]/cs.V5.time[,26]
+cs.V5.time <- cs.V5.time[,-26]
+names(cs.V5.time)[-1] <- paste("time", names(cs.V5.time)[-1], sep="_")
+
+#merge
+cs.V5 <- inner_join(cs.V5.mth, cs.V5.day, by=("CUS_ID")) %>%
+  left_join(cs.V5.time, by="CUS_ID")
+
+####월, 요일, 시간대에 대한 변동계수
+#월별
+cs.V6.mth <- cs %>%
+  group_by(CUS_ID, month) %>%
+  summarize(pv_mth = sum(SITE_CNT)) %>%
+  cast(CUS_ID ~ month, sum) %>%
+  mutate(avg_mth = rowMeans(.[2:13]), sd_mth = rowSds(as.matrix(.[2:13]))) %>%
+  mutate(coef_var_mth = sd_mth/avg_mth) %>%
+  select(CUS_ID, coef_var_mth)
+
+#요일별
+cs.V6.day <- cs %>%
+  group_by(CUS_ID, wkday) %>%
+  summarize(pv_day = sum(SITE_CNT)) %>%
+  cast(CUS_ID ~ wkday, sum) %>%
+  mutate(avg_day = rowMeans(.[2:8]), sd_day = rowSds(as.matrix(.[2:8]))) %>%
+  mutate(coef_var_day = sd_day/avg_day) %>%
+  select(CUS_ID, coef_var_day)
+
+#시간대별
+cs.V6.time <- cs %>%
+  group_by(CUS_ID, time) %>%
+  summarize(pv_time = sum(SITE_CNT)) %>%
+  cast(CUS_ID ~ time, sum) %>%
+  mutate(avg_time = rowMeans(.[2:25]), sd_time = rowSds(as.matrix(.[2:25]))) %>%
+  mutate(coef_var_time = sd_time/avg_time) %>%
+  select(CUS_ID, coef_var_time)
+
+#merge
+cs.V6 <- inner_join(cs.V6.mth, cs.V6.day, by=("CUS_ID")) %>%
+  left_join(cs.V6.time, by="CUS_ID")
+
+####검색키워드 
+
+
+####뉴스사이트 카테고리별 페이지뷰 비율
+cs.V8 <- cs %>% subset(BACT_NM=="뉴스/미디어") %>%
+  group_by(CUS_ID, MACT_NM) %>%
+  summarize(cs = n()) %>%
+  cast(CUS_ID ~ MACT_NM, sum) %>%
+  mutate(ttl_pv_news = rowSums(.[2:10]))
+
+cs.V8[,2:10] <- cs.V8[,2:10]/cs.V8[,11]
+cs.V8 <- cs.V8[,-11]
+names(cs.V8)[-1] <- paste("pv_news", names(cs.V8)[-1], sep="_")
+
+
+####카테고리별 방문 일수
+
+
+####NA점검
+anyNA(cs.V1)
+anyNA(cs.V2)
+anyNA(cs.V3)
+anyNA(cs.V4)
+anyNA(cs.V5)
+anyNA(cs.V6)
+#anyNA(cs.V7)
+anyNA(cs.V8)
+
+
+#######최종merge
+custsig.train <- profile %>%
+  left_join (cs.V1) %>%
+  left_join (cs.V2) %>%
+  left_join (cs.V3) %>%
+  left_join (cs.V4) %>%
+  left_join (cs.V5) %>%
+  left_join (cs.V6) %>%
+  #left_join (cs.V7) %>%  #검색어
+  left_join (cs.V8)
+
+custsig.train[is.na(custsig.train)] <- 0
+
+#남자/여자 1/0으로
+custsig.train$GENDER[custsig.train$GENDER=="남자"] <- 0         #남
+custsig.train$GENDER[custsig.train$GENDER=="여자"] <- 1         #여
+
+####변수명 조정
+names(custsig.train) <- gsub(" ", "", names(custsig.train))
+names(custsig.train) <- gsub("/", "", names(custsig.train))
+
+write.csv(custsig.train, file="custsig_train.csv")
+
+
+
+#########Module 2 : Create Testing Set#########
+####총 페이지뷰 횟수
+cs_t.V1 <- cs_t %>% 
+  group_by(CUS_ID) %>%
+  summarize(ttl_pv = sum(SITE_CNT))
+
+####웹사이트 카테고리별 페이지뷰 비율
+cs_t.V2.1 <- cs_t %>%
+  group_by(CUS_ID, BACT_NM) %>%
+  summarize(cs_t = n()) %>%
+  cast(CUS_ID ~ BACT_NM, sum) %>%
+  mutate(ttl_pv = cs_t.V1$ttl_pv)
+
+cs_t.V2.1[,2:23] <- cs_t.V2.1[,2:23]/cs_t.V2.1[,24]
+cs_t.V2.1 <- cs_t.V2.1[,-24]
+names(cs_t.V2.1)[-1] <- paste("pv", names(cs_t.V2.1)[-1], sep="_")
+
+cs_t.V2.2 <- cs_t %>%
+  group_by(CUS_ID, MACT_NM) %>%
+  summarize(cs_t = n()) %>%
+  cast(CUS_ID ~ MACT_NM, sum) %>%
+  mutate(ttl_pv = cs_t.V1$ttl_pv)
+
+cs_t.V2.2[,2:208] <- cs_t.V2.2[,2:208]/cs_t.V2.2[,209]
+cs_t.V2.2 <- cs_t.V2.2[,-209]
+names(cs_t.V2.2)[-1] <- paste("mact", names(cs_t.V2.2)[-1], sep="_")
+
+cs_t.V2 <- inner_join(cs_t.V2.1, cs_t.V2.2, by=("CUS_ID"))
+
+####카테고리에 대한 변동계수
+cs_t.V3 <- cs_t %>%
+  group_by(CUS_ID, BACT_NM) %>%
+  summarize(cs_t = n()) %>%
+  cast(CUS_ID ~ BACT_NM, sum) %>%
+  mutate(avg_pv = rowMeans(.[2:23]), sd_pv = rowSds(as.matrix(.[2:23]))) %>%
+  mutate(coef_var_cat = sd_pv/avg_pv) %>%
+  select(CUS_ID, coef_var_cat)
+
+####날짜계산용 전처리
+cs_t$TIME_ID <- ymd_h(cs_t$TIME_ID)
+cs_t$date <- date(cs_t$TIME_ID)
+cs_t$year <- year(cs_t$TIME_ID)
+cs_t$month <- month(cs_t$TIME_ID)
+cs_t$day <- day(cs_t$TIME_ID)
+cs_t$time <- hour(cs_t$TIME_ID)
+cs_t$wkday <- wday(cs_t$TIME_ID)
+
+####총 방문 일수
+cs_t.V4 <- cs_t %>%
+  group_by(CUS_ID, date) %>%
+  summarize(cs_t = n()) %>%
+  group_by(CUS_ID) %>%
+  summarize(ttl_vis_day = n())
+
+####월별, 요일별, 시간대별 페이지뷰 비율 
+#월별
+cs_t.V5.mth <- cs_t %>%
+  group_by(CUS_ID, month) %>%
+  summarize(pv_mth = sum(SITE_CNT)) %>%
+  cast(CUS_ID ~ month, sum) %>%
+  mutate(ttl_pv = cs_t.V1$ttl_pv)
+
+cs_t.V5.mth[,2:13] <- cs_t.V5.mth[,2:13]/cs_t.V5.mth[,14]
+cs_t.V5.mth <- cs_t.V5.mth[,-14]
+names(cs_t.V5.mth)[-1] <- paste("mth", names(cs_t.V5.mth)[-1], sep="_")
+
+#요일별
+cs_t.V5.day <- cs_t %>%
+  group_by(CUS_ID, wkday) %>%
+  summarize(pv_day = sum(SITE_CNT)) %>%
+  cast(CUS_ID ~ wkday, sum) %>%
+  mutate(ttl_pv = cs_t.V1$ttl_pv)
+
+cs_t.V5.day[,2:8] <- cs_t.V5.day[,2:8]/cs_t.V5.day[,9]
+cs_t.V5.day <- cs_t.V5.day[,-9]
+names(cs_t.V5.day) <- c("CUS_ID", "sun", "mon", "tue", "wed", "thu", "fri", "sat")
+
+#시간대별
+cs_t.V5.time <- cs_t %>%
+  group_by(CUS_ID, time) %>%
+  summarize(pv_time = sum(SITE_CNT)) %>%
+  cast(CUS_ID ~ time, sum) %>%
+  mutate(ttl_pv = cs_t.V1$ttl_pv)
+
+cs_t.V5.time[,2:25] <- cs_t.V5.time[,2:25]/cs_t.V5.time[,26]
+cs_t.V5.time <- cs_t.V5.time[,-26]
+names(cs_t.V5.time)[-1] <- paste("time", names(cs_t.V5.time)[-1], sep="_")
+
+#merge
+cs_t.V5 <- inner_join(cs_t.V5.mth, cs_t.V5.day, by=("CUS_ID")) %>%
+  left_join(cs_t.V5.time, by="CUS_ID")
+
+####월, 요일, 시간대에 대한 변동계수
+#월별
+cs_t.V6.mth <- cs_t %>%
+  group_by(CUS_ID, month) %>%
+  summarize(pv_mth = sum(SITE_CNT)) %>%
+  cast(CUS_ID ~ month, sum) %>%
+  mutate(avg_mth = rowMeans(.[2:13]), sd_mth = rowSds(as.matrix(.[2:13]))) %>%
+  mutate(coef_var_mth = sd_mth/avg_mth) %>%
+  select(CUS_ID, coef_var_mth)
+
+#요일별
+cs_t.V6.day <- cs_t %>%
+  group_by(CUS_ID, wkday) %>%
+  summarize(pv_day = sum(SITE_CNT)) %>%
+  cast(CUS_ID ~ wkday, sum) %>%
+  mutate(avg_day = rowMeans(.[2:8]), sd_day = rowSds(as.matrix(.[2:8]))) %>%
+  mutate(coef_var_day = sd_day/avg_day) %>%
+  select(CUS_ID, coef_var_day)
+
+#시간대별
+cs_t.V6.time <- cs_t %>%
+  group_by(CUS_ID, time) %>%
+  summarize(pv_time = sum(SITE_CNT)) %>%
+  cast(CUS_ID ~ time, sum) %>%
+  mutate(avg_time = rowMeans(.[2:25]), sd_time = rowSds(as.matrix(.[2:25]))) %>%
+  mutate(coef_var_time = sd_time/avg_time) %>%
+  select(CUS_ID, coef_var_time)
+
+#merge
+cs_t.V6 <- inner_join(cs_t.V6.mth, cs_t.V6.day, by=("CUS_ID")) %>%
+  left_join(cs_t.V6.time, by="CUS_ID")
+
+
+####뉴스사이트 카테고리별 페이지뷰 비율
+cs_t.V8 <- cs_t %>% subset(BACT_NM=="뉴스/미디어") %>%
+  group_by(CUS_ID, MACT_NM) %>%
+  summarize(cs_t = n()) %>%
+  cast(CUS_ID ~ MACT_NM, sum) %>%
+  mutate(ttl_pv_news = rowSums(.[2:10]))
+
+cs_t.V8[,2:10] <- cs_t.V8[,2:10]/cs_t.V8[,11]
+cs_t.V8 <- cs_t.V8[,-11]
+names(cs_t.V8)[-1] <- paste("pv_news", names(cs_t.V8)[-1], sep="_")
+
+####카테고리별 방문 일수
+
+
+####NA점검
+anyNA(cs_t.V1)
+anyNA(cs_t.V2)
+anyNA(cs_t.V3)
+anyNA(cs_t.V4)
+anyNA(cs_t.V5)
+anyNA(cs_t.V6)
+#anyNA(cs_t.V7)
+anyNA(cs_t.V8)
+#anyNA(cs_t.V9)
+
+custsig.test <- cs_t.V1 %>%
+  left_join (cs_t.V2) %>%
+  left_join (cs_t.V3) %>%
+  left_join (cs_t.V4) %>%
+  left_join (cs_t.V5) %>%
+  left_join (cs_t.V6) %>%
+  #left_join (cs_t.V7) %>%  #검색어
+  left_join (cs_t.V8)
+  #left_join (cs_t.V9)
+
+custsig.test[is.na(custsig.test)] <- 0
+
+####변수명 조정
+names(custsig.test) <- gsub(" ", "", names(custsig.test))
+names(custsig.test) <- gsub("/", "", names(custsig.test))
+
+write.csv(custsig.test, file="custsig_test.csv")
+
+
+#########Module 3 : Run Testing############
+#training/test set for gender####
+custsig.sex <- dplyr::select(custsig.train, c(-CUS_ID, -GROUP, -RESIDENCE, -AGE))
+custsig.sex$GENDER <- factor(custsig.sex$GENDER)
+
+#training/test set for age####
+custsig.age <- dplyr::select(custsig.train, c(-CUS_ID, -GROUP, -RESIDENCE, -GENDER))
+custsig.age$AGE <- factor(custsig.age$AGE)
+
+#training/test set for group####
+custsig.group <- dplyr::select(custsig.train, c(-CUS_ID, -GENDER, -RESIDENCE, -AGE))
+custsig.group$GROUP <- factor(custsig.group$GROUP)
+
+custsig.effc.group <- dplyr::select(custsig.group, 
+                                   c(GROUP, ttl_pv, starts_with("pv"), starts_with("time"),
+                                   starts_with("mth"), coef_var_cat, ttl_vis_day,
+                                   mon, tue, wed, thu, fri, sat, starts_with("time"),
+                                   coef_var_day, coef_var_time, coef_var_mth,
+                                   mact_게임전문지웹진, mact_종교, mact_일간지, 
+                                   mact_부동산, mact_커뮤니티포털,mact_군대국방,
+                                   mact_교육기관단체, mact_사회복지, mact_모바일게임, 
+                                   mact_화장품미용, mact_웹서비스, mact_운송, mact_포털, 
+                                   mact_골프, mact_의류패션잡화, mact_의류쇼핑몰, 
+                                   mact_아이템거래, mact_경매, mact_가정용품, mact_다운로드,
+                                   mact_자동차, mact_인터넷비즈니스, mact_분야별커뮤니티,
+                                   mact_도메인호스팅, mact_네트워크, mact_쇼핑기타, 
+                                   mact_학생교과교육, mact_가전쇼핑몰, mact_의료, 
+                                   mact_건강의학정보, mact_도박
+                                   #qry_num, fun.count, nofun.count, count
+                                 ))
+
+custsig.effc.group$GROUP <- as.character(custsig.effc.group$GROUP)
+custsig.effc.group$GROUP[custsig.effc.group$GROUP == "F20-"]<-"F20"
+custsig.effc.group$GROUP[custsig.effc.group$GROUP == "F40+"]<-"F40"
+custsig.effc.group$GROUP[custsig.effc.group$GROUP == "M20-"]<-"M20"
+custsig.effc.group$GROUP[custsig.effc.group$GROUP == "M40+"]<-"M40"
+
+custsig.effc.group$GROUP <- factor(custsig.effc.group$GROUP)
+
+#logloss factor change
+model_xgb <- caret::train(GROUP ~ .,
+                          data = custsig.effc.group, 
+                          method = "xgbTree", 
+                          metric = "logLoss",
+                          trControl = trainControl(method = "repeatedcv", number = 2, 
+                                                   repeats = 2, classProbs=T, 
+                                                   summaryFunction=mnLogLoss, 
+                                                   verboseIter = FALSE))
+
+model_xgb
+
+pred.grp <- predict(model_xgb, custsig.test, type="prob")
