@@ -140,23 +140,16 @@ cs.V6.time <- cs %>%
 cs.V6 <- inner_join(cs.V6.mth, cs.V6.day, by=("CUS_ID")) %>%
   left_join(cs.V6.time, by="CUS_ID")
 
-####검색키워드 
-
-
 ####뉴스사이트 카테고리별 페이지뷰 비율
-cs.V8 <- cs %>% subset(BACT_NM=="뉴스/미디어") %>%
+cs.V7 <- cs %>% subset(BACT_NM=="뉴스/미디어") %>%
   group_by(CUS_ID, MACT_NM) %>%
   summarize(cs = n()) %>%
   cast(CUS_ID ~ MACT_NM, sum) %>%
   mutate(ttl_pv_news = rowSums(.[2:10]))
 
-cs.V8[,2:10] <- cs.V8[,2:10]/cs.V8[,11]
-cs.V8 <- cs.V8[,-11]
-names(cs.V8)[-1] <- paste("pv_news", names(cs.V8)[-1], sep="_")
-
-
-####카테고리별 방문 일수
-
+cs.V7[,2:10] <- cs.V7[,2:10]/cs.V7[,11]
+cs.V7 <- cs.V7[,-11]
+names(cs.V7)[-1] <- paste("pv_news", names(cs.V7)[-1], sep="_")
 
 ####NA점검
 anyNA(cs.V1)
@@ -165,9 +158,7 @@ anyNA(cs.V3)
 anyNA(cs.V4)
 anyNA(cs.V5)
 anyNA(cs.V6)
-#anyNA(cs.V7)
-anyNA(cs.V8)
-
+anyNA(cs.V7)
 
 #######최종merge
 custsig.train <- profile %>%
@@ -177,22 +168,19 @@ custsig.train <- profile %>%
   left_join (cs.V4) %>%
   left_join (cs.V5) %>%
   left_join (cs.V6) %>%
-  #left_join (cs.V7) %>%  #검색어
-  left_join (cs.V8)
+  left_join (cs.V7) 
 
 custsig.train[is.na(custsig.train)] <- 0
 
 #남자/여자 1/0으로
-custsig.train$GENDER[custsig.train$GENDER=="남자"] <- 0         #남
-custsig.train$GENDER[custsig.train$GENDER=="여자"] <- 1         #여
+#custsig.train$GENDER[custsig.train$GENDER=="남자"] <- 0         #남
+#custsig.train$GENDER[custsig.train$GENDER=="여자"] <- 1         #여
 
 ####변수명 조정
 names(custsig.train) <- gsub(" ", "", names(custsig.train))
 names(custsig.train) <- gsub("/", "", names(custsig.train))
 
 write.csv(custsig.train, file="custsig_train.csv")
-
-
 
 #########Module 2 : Create Testing Set#########
 ####총 페이지뷰 횟수
@@ -320,17 +308,15 @@ cs_t.V6 <- inner_join(cs_t.V6.mth, cs_t.V6.day, by=("CUS_ID")) %>%
 
 
 ####뉴스사이트 카테고리별 페이지뷰 비율
-cs_t.V8 <- cs_t %>% subset(BACT_NM=="뉴스/미디어") %>%
+cs_t.V7 <- cs_t %>% subset(BACT_NM=="뉴스/미디어") %>%
   group_by(CUS_ID, MACT_NM) %>%
   summarize(cs_t = n()) %>%
   cast(CUS_ID ~ MACT_NM, sum) %>%
   mutate(ttl_pv_news = rowSums(.[2:10]))
 
-cs_t.V8[,2:10] <- cs_t.V8[,2:10]/cs_t.V8[,11]
-cs_t.V8 <- cs_t.V8[,-11]
-names(cs_t.V8)[-1] <- paste("pv_news", names(cs_t.V8)[-1], sep="_")
-
-####카테고리별 방문 일수
+cs_t.V7[,2:10] <- cs_t.V7[,2:10]/cs_t.V7[,11]
+cs_t.V7 <- cs_t.V7[,-11]
+names(cs_t.V7)[-1] <- paste("pv_news", names(cs_t.V8)[-1], sep="_")
 
 
 ####NA점검
@@ -340,9 +326,7 @@ anyNA(cs_t.V3)
 anyNA(cs_t.V4)
 anyNA(cs_t.V5)
 anyNA(cs_t.V6)
-#anyNA(cs_t.V7)
-anyNA(cs_t.V8)
-#anyNA(cs_t.V9)
+anyNA(cs_t.V7)
 
 custsig.test <- cs_t.V1 %>%
   left_join (cs_t.V2) %>%
@@ -350,9 +334,7 @@ custsig.test <- cs_t.V1 %>%
   left_join (cs_t.V4) %>%
   left_join (cs_t.V5) %>%
   left_join (cs_t.V6) %>%
-  #left_join (cs_t.V7) %>%  #검색어
-  left_join (cs_t.V8)
-  #left_join (cs_t.V9)
+  left_join (cs_t.V7) 
 
 custsig.test[is.na(custsig.test)] <- 0
 
@@ -364,54 +346,264 @@ write.csv(custsig.test, file="custsig_test.csv")
 
 
 #########Module 3 : Run Testing############
-#training/test set for gender####
-custsig.sex <- dplyr::select(custsig.train, c(-CUS_ID, -GROUP, -RESIDENCE, -AGE))
+
+custsig.train <- read.csv("custsig_train.csv", stringsAsFactors = F)
+custsig.test <- read.csv("custsig_test.csv", stringsAsFactors = F)
+
+#choosing effective variables
+custsig.effc <- dplyr::select(custsig.train, 
+                              c(GROUP, AGE, GENDER, ttl_pv, starts_with("pv"), 
+                              starts_with("time"),starts_with("mth"), coef_var_cat, 
+                              ttl_vis_day, mon, tue, wed, thu, fri, sat, starts_with("time"),
+                              coef_var_day, coef_var_time, coef_var_mth,
+                              mact_게임전문지웹진, mact_종교, mact_일간지, 
+                              mact_부동산, mact_커뮤니티포털,mact_군대국방,
+                              mact_교육기관단체, mact_사회복지, mact_모바일게임, 
+                              mact_화장품미용, mact_웹서비스, mact_운송, mact_포털, 
+                              mact_골프, mact_의류패션잡화, mact_의류쇼핑몰, 
+                              mact_아이템거래, mact_경매, mact_가정용품, mact_다운로드,
+                              mact_자동차, mact_인터넷비즈니스, mact_분야별커뮤니티,
+                              mact_도메인호스팅, mact_네트워크, mact_쇼핑기타, 
+                              mact_학생교과교육, mact_가전쇼핑몰, mact_의료, 
+                              mact_건강의학정보, mact_도박
+                              #qry_num, fun.count, nofun.count, count
+                              ))
+
+####Module 3.1 : Run with Gender####
+
+#training/test set for gender
+custsig.sex <- dplyr::select(custsig.effc, c(-GROUP, -AGE))
+
+custsig.sex$GENDER[custsig.sex$GENDER=="0"] <- "Male"         #남
+custsig.sex$GENDER[custsig.sex$GENDER=="1"] <- "Female"       #여
+
 custsig.sex$GENDER <- factor(custsig.sex$GENDER)
 
-#training/test set for age####
-custsig.age <- dplyr::select(custsig.train, c(-CUS_ID, -GROUP, -RESIDENCE, -GENDER))
-custsig.age$AGE <- factor(custsig.age$AGE)
+#train model and save
+sex_model_xgb <- caret::train(GENDER ~ .,
+                              data = custsig.sex, 
+                              method = "xgbTree", 
+                              metric = "logLoss",
+                              trControl = trainControl(method = "repeatedcv", number = 2, 
+                                                       repeats = 2, classProbs=T, 
+                                                       summaryFunction=mnLogLoss, 
+                                                       verboseIter = FALSE))
 
-#training/test set for group####
-custsig.group <- dplyr::select(custsig.train, c(-CUS_ID, -GENDER, -RESIDENCE, -AGE))
+sex_model_xgb
+
+saveRDS(sex_model_xgb, "pred_sex.rds")
+#sex_model_xgb <- readRDS("pred_sex.rds")
+
+#predict
+pred.sex <- predict(sex_model_xgb, custsig.test, type="prob")
+pred.sex$CUS_ID <- custsig.test$CUS_ID
+pred.sex <- pred.sex[c(3,1,2)]
+head(pred.sex)
+
+write.csv(pred.sex, file="sex_prediction.csv")
+
+
+
+####Module 3.2 : Run with AGE####
+
+#training/test set for age####
+custsig.age <- dplyr::select(custsig.effc, c(-GROUP, -GENDER))
+
+custsig.age <- mutate(custsig.age, AGEGRP = ifelse(AGE==10|AGE==20, "20-",
+                                            ifelse(AGE==30, "30", "40+")))
+
+#custsig.age$AGE[custsig.age$AGE==10] <- "Ten"        
+#custsig.age$AGE[custsig.age$AGE==20] <- "Twenty" 
+#custsig.age$AGE[custsig.age$AGE==30] <- "Thirty"        
+#custsig.age$AGE[custsig.age$AGE==40] <- "Fourty" 
+#custsig.age$AGE[custsig.age$AGE==50] <- "Fifty"        
+#custsig.age$AGE[custsig.age$AGE==60] <- "Sixty" 
+
+custsig.age$AGEGRP[custsig.age$AGEGRP=="20-"] <- "under20"
+custsig.age$AGEGRP[custsig.age$AGEGRP=="30"]  <- "in30"
+custsig.age$AGEGRP[custsig.age$AGEGRP=="40+"] <- "over40"
+
+#custsig.age$AGE <- factor(custsig.age$AGE)
+custsig.age$AGEGRP <- factor(custsig.age$AGEGRP)
+
+#train model and save
+age_model_xgb <- caret::train(AGEGRP ~ .-AGE,
+                              data = custsig.age, 
+                              method = "xgbTree", 
+                              metric = "logLoss",
+                              trControl = trainControl(method = "repeatedcv", number = 2, 
+                                                       repeats = 2, classProbs=T, 
+                                                       summaryFunction=mnLogLoss, 
+                                                       verboseIter = FALSE))
+
+age_model_xgb
+
+saveRDS(age_model_xgb, "pred_age.rds")
+#sex_model_age <- readRDS("pred_age.rds")
+
+#predict
+pred.age <- predict(age_model_xgb, custsig.test, type="prob")
+pred.age$CUS_ID <- custsig.test$CUS_ID
+pred.age <- pred.age[c(7,1:6)]
+head(pred.age)
+
+write.csv(pred.age, file="age_prediction.csv")
+
+
+
+####Module 3.3 : Run with Group####
+
+#training/test set for group
+custsig.group <- dplyr::select(custsig.effc, c(-GENDER, -AGE))
+
+custsig.group$GROUP[custsig.group$GROUP == "F20-"]<-"F20"
+custsig.group$GROUP[custsig.group$GROUP == "F40+"]<-"F40"
+custsig.group$GROUP[custsig.group$GROUP == "M20-"]<-"M20"
+custsig.group$GROUP[custsig.group$GROUP == "M40+"]<-"M40"
+
 custsig.group$GROUP <- factor(custsig.group$GROUP)
 
-custsig.effc.group <- dplyr::select(custsig.group, 
-                                   c(GROUP, ttl_pv, starts_with("pv"), starts_with("time"),
-                                   starts_with("mth"), coef_var_cat, ttl_vis_day,
-                                   mon, tue, wed, thu, fri, sat, starts_with("time"),
-                                   coef_var_day, coef_var_time, coef_var_mth,
-                                   mact_게임전문지웹진, mact_종교, mact_일간지, 
-                                   mact_부동산, mact_커뮤니티포털,mact_군대국방,
-                                   mact_교육기관단체, mact_사회복지, mact_모바일게임, 
-                                   mact_화장품미용, mact_웹서비스, mact_운송, mact_포털, 
-                                   mact_골프, mact_의류패션잡화, mact_의류쇼핑몰, 
-                                   mact_아이템거래, mact_경매, mact_가정용품, mact_다운로드,
-                                   mact_자동차, mact_인터넷비즈니스, mact_분야별커뮤니티,
-                                   mact_도메인호스팅, mact_네트워크, mact_쇼핑기타, 
-                                   mact_학생교과교육, mact_가전쇼핑몰, mact_의료, 
-                                   mact_건강의학정보, mact_도박
-                                   #qry_num, fun.count, nofun.count, count
-                                 ))
+#train model and save
+grp_model_xgb <- caret::train(GROUP ~ .,
+                              data = custsig.group, 
+                              method = "xgbTree", 
+                              metric = "logLoss",
+                              trControl = trainControl(method = "repeatedcv", number = 2, 
+                                                       repeats = 2, classProbs=T, 
+                                                       summaryFunction=mnLogLoss, 
+                                                       verboseIter = FALSE))
 
-custsig.effc.group$GROUP <- as.character(custsig.effc.group$GROUP)
-custsig.effc.group$GROUP[custsig.effc.group$GROUP == "F20-"]<-"F20"
-custsig.effc.group$GROUP[custsig.effc.group$GROUP == "F40+"]<-"F40"
-custsig.effc.group$GROUP[custsig.effc.group$GROUP == "M20-"]<-"M20"
-custsig.effc.group$GROUP[custsig.effc.group$GROUP == "M40+"]<-"M40"
+grp_model_xgb
 
-custsig.effc.group$GROUP <- factor(custsig.effc.group$GROUP)
+saveRDS(grp_model_xgb, "pred_grp.rds")
+#grp_model_xgb <- readRDS("pred_grp.rds")
 
-#logloss factor change
-model_xgb <- caret::train(GROUP ~ .,
-                          data = custsig.effc.group, 
-                          method = "xgbTree", 
-                          metric = "logLoss",
-                          trControl = trainControl(method = "repeatedcv", number = 2, 
-                                                   repeats = 2, classProbs=T, 
-                                                   summaryFunction=mnLogLoss, 
-                                                   verboseIter = FALSE))
+#predict
+pred.grp <- predict(grp_model_xgb, custsig.test, type="prob")
+colnames(pred.grp) <- c("F20-", "F30", "F40+", "M20-", "M30", "M40+")
+pred.grp$CUS_ID <- custsig.test$CUS_ID
+pred.grp <- pred.grp[c(7,1:6)]
 
-model_xgb
+head(pred.grp)
 
-pred.grp <- predict(model_xgb, custsig.test, type="prob")
+write.csv(pred.grp, file="group_prediction.csv")
+
+
+
+
+###############MODULE4: Text Mining#######################3
+search.train <- inner_join(search.train, sf.count.train, by="CUS_ID")
+
+sf.count.test <- search.test %>%
+  mutate(fun.count = ifelse(search_function==1, QRY_CNT, 0),
+         nofun.count = ifelse(search_function==0, QRY_CNT, 0)) %>%
+  group_by(CUS_ID) %>%
+  summarise_each(funs(sum), fun.count, nofun.count) %>%
+  mutate(count = fun.count + nofun.count)
+search.test <- inner_join(search.test, sf.count.test, by="CUS_ID")
+
+## Tidy Text generation
+search.train$line <- seq.int(nrow(search.train))
+train.tidy <- data_frame(CUS_ID = search.train[,1], line = 1:length(search.train[,1]), text = search.train[,3])
+train.tidy <- train.tidy %>%
+  unnest_tokens(word, text)
+head(train.tidy,20)
+
+search.test$line <- seq.int(nrow(search.test))
+test.tidy <- data_frame(CUS_ID = search.test[,1], line = 1:length(search.test[,1]), text = search.test[,3])
+test.tidy <- test.tidy %>%
+  unnest_tokens(word, text)
+head(test.tidy,20)
+
+
+## Extracting frequent words
+train.words <- train.tidy %>% 
+  group_by(word) %>%
+  dplyr::summarise(count=n())
+
+train.words <- train.words[order(train.words$word, decreasing = F),]
+train.words <- train.words[-c(1:min(grep("가", train.words$word))),]
+train.words <- train.words[order(train.words$count, decreasing = T),]
+train.words <- train.words[nchar(train.words$word)!=1,]
+train.words <- train.words[!is.na(train.words$count),]
+train.words <- train.words[train.words$count>300,]
+train.tidy.freq <- train.tidy[(train.tidy$word %in% train.words$word),]
+length(unique(train.words$word)); length(unique(train.tidy.freq$CUS_ID))
+
+
+## casting & merging
+train.tidy.freq$count <- 1
+train.cast <- cast(train.tidy.freq, CUS_ID ~ word, sum, value = "count")
+train.cast <- data.table(train.cast, key="CUS_ID")
+
+profile.cast <- select(profile, CUS_ID, GROUP)
+profile.cast <- data.table(profile.cast, key="CUS_ID")
+train.cast <- merge(train.cast, profile.cast)
+
+train.cast$gender <- factor(substr(train.cast$GROUP,1,1))
+train.cast$age <- factor(substr(train.cast$GROUP,2,3))
+train.cast$GROUP <- factor(train.cast$GROUP)
+
+train.learn.age <- select(train.cast, -CUS_ID, -gender, -GROUP)
+train.learn.gender <- select(train.cast, -CUS_ID, -age, -GROUP)
+train.learn.group <- select(train.cast, -CUS_ID, -age, -gender)
+
+
+## TestSet Parsing
+words.list <- select(train.cast, -CUS_ID, -gender, -GROUP, -age)
+test.cast <- test.tidy[(test.tidy$word %in% names(words.list)),]
+length(unique(test.cast$CUS_ID))
+length(unique(test.tidy$CUS_ID))
+
+test.cast$count <- 1
+test.cast <- cast(test.cast, CUS_ID ~ word, sum, value = "count")
+
+
+## Training
+fitControl <- trainControl(
+  method = "repeatedcv",
+  number = 10,
+  repeats = 10)
+
+# AGE
+train.lda.age <- caret::train(age ~ ., 
+                              data = train.learn.age, 
+                              method = "lda",
+                              trControl = fitControl)
+train.lda.age
+predict.age <- predict(train.lda.age, newdata = select(test.cast, -CUS_ID), type = "prob")
+predict.age$CUS_ID <- test.cast$CUS_ID
+write.csv(predict.age, "predict_age (sk).csv")
+
+# GENDER
+train.lda.gender <- caret::train(gender ~ ., 
+                                 data = train.learn.gender, 
+                                 method = "lda",
+                                 trControl = fitControl)
+train.lda.gender
+predict.gender <- predict(train.lda.gender, newdata = select(test.cast, -CUS_ID), type = "prob")
+predict.gender$CUS_ID <- test.cast$CUS_ID
+write.csv(predict.gender, "predict_gender (sk).csv")
+
+# GROUP
+train.lda.group <- caret::train(gender ~ ., 
+                                data = train.learn.group, 
+                                method = "lda",
+                                trControl = fitControl)
+train.lda.group
+predict.group <- predict(train.lda.group, newdata = select(test.cast, -CUS_ID), type = "prob")
+predict.group$CUS_ID <- test.cast$CUS_ID
+write.csv(predict.group, "predict_gender (sk).csv")
+
+
+
+
+
+
+
+
+
+
+
+
+
